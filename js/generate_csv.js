@@ -23,28 +23,38 @@ console.log('my javascript loaded.');
     }
 
     _downloadFile() {
-      const csvText = this._toCSVText();
-      const blob    = new Blob([csvText], {'type': 'text/csv'});
+      const str2array = function(str) {
+        let array = [],i,il=str.length;
+        for (i=0; i<il; i++) array.push(str.charCodeAt(i));
+        return array;
+      };
+
+      const data = this._toCSVData();
+      const csvbuf = data.map(function(e){return e.join(',')}).join('\r\n');
+      const utf8Array = str2array(csvbuf);
+      const sjisArray = Encoding.convert(utf8Array, 'SJIS', 'UNICODE');
+      const uint8Array = new Uint8Array(sjisArray);
+      const blob    = new Blob([uint8Array], { type: 'text/csv' });
       const url     = window.URL || window.webkitURL;
       const blobURL = url.createObjectURL(blob);
 
       let a = document.createElement('a');
-      a.download = decodeURI('output.csv');
+      a.download = decodeURI(`output-${(new Date()).getTime()}.csv`);
       a.href = blobURL;
       a.type = 'text/csv';
 
       a.click();
     }
 
-    _toCSVText() {
+    _toCSVData() {
       let rows = [];
       for (let i = 0; i < this.records.length; i++) {
-        rows.push(this._toCSVLine(this.records[i]));
+        rows.push(this._toCSVRecord(this.records[i]));
       }
-      return rows.join("\r\n");
+      return rows;
     }
 
-    _toCSVLine(record) {
+    _toCSVRecord(record) {
       return [
         record.expenses_account.value,
         record.description.value,
@@ -53,7 +63,7 @@ console.log('my javascript loaded.');
         record.date.value,
         record.name.value,
         record.payment_due_date.value
-      ].join(',');
+      ];
     }
 
     _updateRecords() {
