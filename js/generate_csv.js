@@ -24,8 +24,8 @@ console.log('my javascript loaded.');
 
     _downloadFile() {
       const str2array = function(str) {
-        let array = [],i,il=str.length;
-        for (i=0; i<il; i++) array.push(str.charCodeAt(i));
+        let array = [];
+        for (let i = 0; i < str.length; i++) array.push(str.charCodeAt(i));
         return array;
       };
 
