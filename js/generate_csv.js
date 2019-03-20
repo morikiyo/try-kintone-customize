@@ -5,19 +5,158 @@ console.log('my javascript loaded.');
   console.log('my anonymous function loaded.');
 
   class CSV {
-    constructor(appId, records) {
-      this.appId = appId;
-      this.records = records;
+    constructor(records, newline = '\r\n') {
+      this._srcRecords = records;
+      this.newline = newline;
+      this._ready = false;
+      this._costAccountCodeMap = {
+        '6212': '外注費',
+        '6113': '広告宣伝費',
+        '5214': 'ｺﾐｯｼｮﾝ料',
+        '6331': 'SaaS代',
+        '6332': '仕入外注費'
+      };
     }
 
-    output() {
-      if (this.records.length === 0) {
+    getRows() {
+      if (!this._ready) this._convert();
+      return this._rows;
+    }
+
+    getRecords() {
+      if (!this._ready) this._convert();
+      return this._records;
+    }
+
+    toString() {
+      const rows = this.getRows();
+      if (rows.length === 0) {
+        return '';
+      }
+
+      return rows.map(function(e){return e.join(',')}).join(this.newline);
+    }
+
+    _convert() {
+      this._rows = [];
+      this._records = [];
+      this._userNameMap = null;
+      for (let i = 0; i < this._srcRecords.length; i++) {
+        const record = this._srcRecords[i];
+        const row = this._convertRecord(record);
+        if (row !== null) {
+          this._rows.push(row);
+          this._records.push(record);
+        }
+      }
+      this._ready = true;
+    }
+
+    _convertRecord(record) {
+      const expensesAccount = record.expenses_account.value;
+      const payerName = record.name.value;
+      if (!expensesAccount || !payerName) {
+        return null;
+      }
+
+      if (this._userNameMap === null) {
+        this._makeUserNameMap(record.user_json.value);
+      }
+
+      let row = Array(29).fill('');
+      // 1 処理区分
+      row[0] = '1';
+      // 2 データID
+      // 3 伝票日付
+      row[2] = record.date.value;
+      // 4 伝票番号
+      // 5 入力日付
+      // ---- 借方 ----
+      // 6 科目
+      row[5] = this._toAccountCode(expensesAccount);
+      // 7 補助コード
+      // 科目 = 6212:外注費 の場合は '13' [NOTICE] 現状、外注費は選択できない
+      // 8 部門コード
+      // 9 取引先コード
+      // 10 取引先名
+      // 11 税種別
+      row[10] = this._toTaxType(row[5]);
+      // 12 事業区分
+      row[11] = '1';
+      // 13 税率
+      row[12] = this._toTaxRate(record.tax.value);
+      // 14 内外別記
+      if (row[12] !== '0') row[13] = '1'; // 1:内税
+      // 15 金額
+      row[14] = record.amount.value;
+      // 16 税額
+      // 17 摘要
+      row[16] = record.description.value;
+      // ---- 貸方 ----
+      // 18 貸方科目
+      row[17] = this._toCreditAccountCode(payerName);
+      // 19 補助コード
+      row[18] = this._toPayerCode(payerName, );
+      // 20 部門コード
+      // 21 取引先コード
+      // 22 取引先名
+      // 23 税種別
+      row[22] = row[10];
+      // 24 事業区分
+      row[23] = '1';
+      // 25 税率
+      row[24] = row[12];
+      // 26 内外別記
+      row[25] = row[13];
+      // 27 金額
+      row[26] = row[14];
+      // 28 税額
+      // 29 摘要
+      row[28] = row[16];
+
+      return row;
+    }
+
+    _toAccountCode(value) {
+      return value.split(':')[1];
+    }
+
+    _toTaxType(accountCode) {
+      return (accountCode in this._costAccountCodeMap) ? '50' : '60';
+    }
+
+    _toTaxRate(value) {
+      return (value === '対象外') ? '0' : '8';
+    }
+
+    _toCreditAccountCode(payerName) {
+      return (payerName === '小口現金') ? '1118' : '2114';
+    }
+
+    _toPayerCode(payerName) {
+      return (payerName in this._userNameMap) ? this._userNameMap[payerName] : '';
+    }
+
+    _makeUserNameMap(value) {
+      const json = value.replace(/\"/g, '').replace(/([^,:\n]+):(\d+)/g, "\"$1\":\"$2\"");
+      this._userNameMap = JSON.parse(json);
+    }
+  }
+
+  class CSVGenerator {
+    constructor(appId, records) {
+      this.appId = appId;
+      this.csv = new CSV(records);
+    }
+
+    generate() {
+      if (this.csv.getRows().length === 0) {
         alert('出力データがありません。')
         return;
       }
 
       this._downloadFile();
-      this._updateRecords();
+      this._updateOutputCSV();
 
       location.reload();
     }
@@ -29,8 +168,10 @@ console.log('my javascript loaded.');
         return array;
       };
 
-      const data = this._toCSVData();
-      const csvbuf = data.map(function(e){return e.join(',')}).join('\r\n');
+      console.info('CSVを出力します。')
+      console.table(this.csv.getRows());
+
+      const csvbuf = this.csv.toString();
       const utf8Array = str2array(csvbuf);
       const sjisArray = Encoding.convert(utf8Array, 'SJIS', 'UNICODE');
       const uint8Array = new Uint8Array(sjisArray);
@@ -46,31 +187,12 @@ console.log('my javascript loaded.');
       a.click();
     }
 
-    _toCSVData() {
-      let rows = [];
-      for (let i = 0; i < this.records.length; i++) {
-        rows.push(this._toCSVRecord(this.records[i]));
-      }
-      return rows;
-    }
-
-    _toCSVRecord(record) {
-      return [
-        record.expenses_account.value,
-        record.description.value,
-        record.amount.value,
-        record.tax.value,
-        record.date.value,
-        record.name.value,
-        record.payment_due_date.value
-      ];
-    }
-
-    _updateRecords() {
+    _updateOutputCSV() {
+      const csvRecords = this.csv.getRecords();
       let updateRecords = [];
-      for (let i = 0; i < this.records.length; i++) {
+      for (let i = 0; i < csvRecords.length; i++) {
         const o = {
-          'id': this.records[i]['レコード番号'].value,
+          'id': csvRecords[i]['レコード番号'].value,
           'record': {
             'output_csv': {
               'value': ['済']
@@ -97,7 +219,7 @@ console.log('my javascript loaded.');
     }
   }
 
-  function displayOutputCSVButton(csv) {
+  function displayOutputCSVButton(csvGenerator) {
     // 増殖バグを防ぐ
     if (document.getElementById('my_output_csv_button') !== null) {
         return;
@@ -109,8 +231,8 @@ console.log('my javascript loaded.');
     myIndexButton.innerText = 'CSV出力';
     myIndexButton.onclick = function() {
       if (typeof Blob !== undefined) {
-        if (csv && window.confirm('CSVを出力します。')) {
-          csv.output();
+        if (csvGenerator && window.confirm('CSVを出力します。')) {
+          csvGenerator.generate();
         }
       } else {
         window.alert('このブラウザには対応していません');
@@ -123,8 +245,8 @@ console.log('my javascript loaded.');
 
   kintone.events.on('app.record.index.show', function(event) {
     if (event.viewId === 5299939) {
-      const csv = new CSV(event.appId, event.records);
-      displayOutputCSVButton(csv);
+      const csvGenerator = new CSVGenerator(event.appId, event.records);
+      displayOutputCSVButton(csvGenerator);
     }
   });
 })();
